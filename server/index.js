@@ -73,10 +73,20 @@ app.post('/api/games/connect', auth, (req, res) => {
   if (!data.games.some(item => item.id === gameId)) data.games.push(game);
   writeData(data); res.json({ message: `เชื่อมต่อ ${game.name} สำเร็จ`, game, account: { gameId, playerId: playerId.trim() } });
 });
-app.get('/api/dashboard', auth, (_, res) => { const data = readData(); const user = data.users.find(item => item.id === _.auth.id); const gameIds = user.gameIds || []; res.json({ user: publicUser(user), games: data.games.filter(game => gameIds.includes(game.id)), quests: data.quests.filter(quest => gameIds.includes(quest.gameId)), achievements: data.achievements, gameAccounts: user.gameAccounts || [] }); });
+app.post('/api/quests', auth, (req, res) => {
+  const { gameId, title, description, reward } = req.body; const data = readData(); const user = data.users.find(item => item.id === req.auth.id);
+  if (!user || !(user.gameIds || []).includes(gameId)) return res.status(403).json({ message: 'คุณยังไม่ได้เชื่อมต่อเกมนี้' });
+  if (!title?.trim() || !description?.trim() || !Number.isFinite(Number(reward)) || Number(reward) < 1) return res.status(400).json({ message: 'กรุณากรอกข้อมูลภารกิจให้ครบ' });
+  const quest = { id: `q-${Date.now()}`, gameId, title: title.trim(), description: description.trim(), type: 'Custom quest', reward: Number(reward), progress: 0, due: 'Today', status: 'active' };
+  data.quests.push(quest); writeData(data); res.status(201).json({ message: 'เพิ่มภารกิจสำเร็จ', quest });
+});
+app.get('/api/dashboard', auth, (_, res) => { const data = readData(); const user = data.users.find(item => item.id === _.auth.id); if (!user) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' }); const gameIds = user.gameIds || []; res.json({ user: publicUser(user), games: data.games.filter(game => gameIds.includes(game.id)), quests: data.quests.filter(quest => gameIds.includes(quest.gameId)), achievements: data.achievements, gameAccounts: user.gameAccounts || [] }); });
 app.patch('/api/quests/:id/complete', auth, (req, res) => {
-  const data = readData(); const quest = data.quests.find(item => item.id === req.params.id);
+  const data = readData(); const user = data.users.find(item => item.id === req.auth.id); const quest = data.quests.find(item => item.id === req.params.id);
+  if (!user) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' });
   if (!quest) return res.status(404).json({ message: 'ไม่พบภารกิจ' });
-  quest.status = 'completed'; quest.progress = 100; writeData(data); res.json(quest);
+  if (!(user.gameIds || []).includes(quest.gameId)) return res.status(403).json({ message: 'คุณไม่มีสิทธิ์ทำภารกิจนี้' });
+  if (quest.status === 'completed') return res.json(quest);
+  quest.status = 'completed'; quest.progress = 100; user.xp = (user.xp || 0) + (quest.reward || 0); writeData(data); res.json(quest);
 });
 app.listen(process.env.PORT || 4000, () => console.log('QuestUp API running on http://localhost:4000'));
