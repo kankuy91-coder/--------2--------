@@ -15,7 +15,7 @@ const gameCatalog = [
   { id: 'valorant', name: 'VALORANT', genre: 'Tactical shooter', color: '#d95d71', icon: '◇', level: 1, progress: 0, quests: 0, achievements: 0, provider: 'Manual connector' }
 ];
 const seed = {
-  users: [{ id: 'u-demo', name: 'Mira Chen', email: 'demo@questup.app', password: bcrypt.hashSync('questup123', 10), role: 'user', level: 42, xp: 6840, coins: 1280, streak: 12, gameIds: ['genshin'], gameAccounts: [{ gameId: 'genshin', playerId: 'mira-42' }] }],
+  users: [{ id: 'u-demo', name: 'Mira Chen', email: 'demo@questup.app', password: bcrypt.hashSync('questup123', 10), role: 'user', level: 42, xp: 6840, coins: 1280, streak: 12 }],
   games: gameCatalog,
   quests: [
     { id: 'q1', gameId: 'genshin', title: 'Defeat the Shadow', description: 'Clear the forgotten ruins and defeat the shadow guardian.', type: 'Epic quest', reward: 420, progress: 80, due: 'Today', status: 'active' },
@@ -35,7 +35,8 @@ const seed = {
 function readData() {
   if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, JSON.stringify(seed, null, 2));
   const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  data.users = data.users.map(user => ({ ...user, gameIds: user.gameIds || (user.id === 'u-demo' ? ['genshin'] : []), gameAccounts: user.gameAccounts || (user.id === 'u-demo' ? [{ gameId: 'genshin', playerId: 'mira-42' }] : []) }));
+  data.users = data.users.map(user => { const { gameIds, gameAccounts, ...cleanUser } = user; return cleanUser; });
+  data.quests = data.quests.map(quest => ({ ...quest, userId: quest.userId || 'u-demo', gameName: quest.gameName || gameCatalog.find(game => game.id === quest.gameId)?.name || 'เกมของฉัน', dueDate: quest.dueDate || '' }));
   return data;
 }
 function writeData(data) { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
@@ -55,7 +56,7 @@ app.post('/api/auth/register', (req, res) => {
   if (!name || !email || !password || password.length < 6) return res.status(400).json({ message: 'กรุณากรอกข้อมูลให้ครบ และรหัสผ่านอย่างน้อย 6 ตัวอักษร' });
   const data = readData();
   if (data.users.some(user => user.email === email.toLowerCase())) return res.status(409).json({ message: 'อีเมลนี้ถูกใช้งานแล้ว' });
-  const user = { id: `u-${Date.now()}`, name, email: email.toLowerCase(), password: bcrypt.hashSync(password, 10), role: 'user', level: 1, xp: 0, coins: 200, streak: 0, gameIds: [], gameAccounts: [] };
+  const user = { id: `u-${Date.now()}`, name, email: email.toLowerCase(), password: bcrypt.hashSync(password, 10), role: 'user', level: 1, xp: 0, coins: 200, streak: 0 };
   data.users.push(user); writeData(data);
   res.status(201).json({ message: 'สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ', user: publicUser(user) });
 });
@@ -65,28 +66,19 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token: tokenFor(user), user: publicUser(user) });
 });
 app.post('/api/auth/forgot-password', (req, res) => res.json({ message: `หากมีบัญชีของ ${req.body.email || 'อีเมลนี้'} ระบบจะส่งลิงก์รีเซ็ตให้` }));
-app.get('/api/games/catalog', auth, (_, res) => res.json(gameCatalog));
-app.post('/api/games/connect', auth, (req, res) => {
-  const { gameId, playerId } = req.body; const data = readData(); const user = data.users.find(item => item.id === req.auth.id); const game = gameCatalog.find(item => item.id === gameId);
-  if (!user || !game || !playerId?.trim()) return res.status(400).json({ message: 'กรุณาเลือกเกมและกรอก Player ID' });
-  user.gameIds = [...new Set([...(user.gameIds || []), gameId])]; user.gameAccounts = [...(user.gameAccounts || []).filter(account => account.gameId !== gameId), { gameId, playerId: playerId.trim() }];
-  if (!data.games.some(item => item.id === gameId)) data.games.push(game);
-  writeData(data); res.json({ message: `เชื่อมต่อ ${game.name} สำเร็จ`, game, account: { gameId, playerId: playerId.trim() } });
-});
 app.post('/api/quests', auth, (req, res) => {
-  const { gameId, title, description, reward } = req.body; const data = readData(); const user = data.users.find(item => item.id === req.auth.id);
-  if (!user || !(user.gameIds || []).includes(gameId)) return res.status(403).json({ message: 'คุณยังไม่ได้เชื่อมต่อเกมนี้' });
-  if (!title?.trim() || !description?.trim() || !Number.isFinite(Number(reward)) || Number(reward) < 1) return res.status(400).json({ message: 'กรุณากรอกข้อมูลภารกิจให้ครบ' });
-  const quest = { id: `q-${Date.now()}`, gameId, title: title.trim(), description: description.trim(), type: 'Custom quest', reward: Number(reward), progress: 0, due: 'Today', status: 'active' };
-  data.quests.push(quest); writeData(data); res.status(201).json({ message: 'เพิ่มภารกิจสำเร็จ', quest });
+  const { gameName, title, description = '', dueDate } = req.body; const data = readData();
+  if (!data.users.some(user => user.id === req.auth.id)) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' });
+  if (!gameName?.trim() || !title?.trim() || !dueDate || Number.isNaN(Date.parse(dueDate))) return res.status(400).json({ message: 'กรุณากรอกชื่อเกม ภารกิจ และวันที่ให้ครบ' });
+  const quest = { id: `q-${Date.now()}`, userId: req.auth.id, gameName: gameName.trim(), title: title.trim(), description: description.trim(), type: 'Personal reminder', reward: 0, progress: 0, due: dueDate, dueDate, status: 'active' };
+  data.quests.push(quest); writeData(data); res.status(201).json({ message: 'บันทึกการเตือนความจำสำเร็จ', quest });
 });
-app.get('/api/dashboard', auth, (_, res) => { const data = readData(); const user = data.users.find(item => item.id === _.auth.id); if (!user) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' }); const gameIds = user.gameIds || []; res.json({ user: publicUser(user), games: data.games.filter(game => gameIds.includes(game.id)), quests: data.quests.filter(quest => gameIds.includes(quest.gameId)), achievements: data.achievements, gameAccounts: user.gameAccounts || [] }); });
+app.get('/api/dashboard', auth, (_, res) => { const data = readData(); const user = data.users.find(item => item.id === _.auth.id); if (!user) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' }); const quests = data.quests.filter(quest => quest.userId === user.id); const games = [...new Set(quests.map(quest => quest.gameName))].map((name, index) => ({ id: `game-${index}`, name, genre: 'Personal reminders', color: '#d86b55', icon: '✦' })); res.json({ user: publicUser(user), games, quests, achievements: data.achievements }); });
 app.patch('/api/quests/:id/complete', auth, (req, res) => {
-  const data = readData(); const user = data.users.find(item => item.id === req.auth.id); const quest = data.quests.find(item => item.id === req.params.id);
+  const data = readData(); const user = data.users.find(item => item.id === req.auth.id); const quest = data.quests.find(item => item.id === req.params.id && item.userId === req.auth.id);
   if (!user) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' });
   if (!quest) return res.status(404).json({ message: 'ไม่พบภารกิจ' });
-  if (!(user.gameIds || []).includes(quest.gameId)) return res.status(403).json({ message: 'คุณไม่มีสิทธิ์ทำภารกิจนี้' });
   if (quest.status === 'completed') return res.json(quest);
-  quest.status = 'completed'; quest.progress = 100; user.xp = (user.xp || 0) + (quest.reward || 0); writeData(data); res.json(quest);
+  quest.status = 'completed'; quest.progress = 100; writeData(data); res.json(quest);
 });
 app.listen(process.env.PORT || 4000, () => console.log('QuestUp API running on http://localhost:4000'));
