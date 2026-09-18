@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Bell, Check, ChevronLeft, Flame, Home, LogOut, Plus, ScrollText, Swords, Trophy, UserRound, X } from 'lucide-react';
+import { ArrowRight, Bell, Check, ChevronLeft, Flame, Home, LogOut, Menu, Plus, ScrollText, Swords, Trophy, UserRound, X } from 'lucide-react';
 import './styles.css';
 import './connection.css';
 
@@ -27,30 +27,53 @@ function App() {
   const [selectedQuest, setSelectedQuest] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { if (token) request('/dashboard', { token }).then(setDashboard).catch(err => { setError(err.message); localStorage.removeItem('questup-token'); setToken(null); setDashboard(null); }); }, [token]);
-  useEffect(() => { if (!dashboard) return; const today = new Date().toISOString().slice(0, 10); const due = dashboard.quests.filter(quest => quest.status !== 'completed' && quest.dueDate <= today); if (due.length) setError(`มี ${due.length} ภารกิจถึงกำหนดแล้ว`); }, [dashboard]);
+  useEffect(() => {
+    if (!token) return;
+    request('/dashboard', { token })
+      .then(setDashboard)
+      .catch(err => {
+        setError(err.message);
+        localStorage.removeItem('questup-token');
+        setToken(null);
+        setDashboard(null);
+      });
+  }, [token]);
+  useEffect(() => {
+    if (!dashboard || !Array.isArray(dashboard.quests)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const due = dashboard.quests.filter(quest => quest.status !== 'completed' && quest.dueDate && quest.dueDate <= today);
+    if (due.length) setError(`มี ${due.length} ภารกิจถึงกำหนดแล้ว`);
+  }, [dashboard]);
   function login(result) { localStorage.setItem('questup-token', result.token); localStorage.setItem('questup-user', JSON.stringify(result.user)); setToken(result.token); setUser(result.user); }
-  function logout() { localStorage.clear(); setToken(null); setUser(null); setDashboard(null); }
+  function logout() { localStorage.clear(); setToken(null); setUser(null); setDashboard(null); setError(''); }
   async function addQuest(quest) { const result = await request('/quests', { method: 'POST', token, body: JSON.stringify(quest) }); const next = await request('/dashboard', { token }); setDashboard(next); setUser(next.user); setError(result.message); }
   async function completeQuest(id) { const result = await request(`/quests/${id}/complete`, { method: 'PATCH', token }); const next = await request('/dashboard', { token }); setDashboard(next); setUser(next.user); setSelectedQuest(result); }
   if (!token || !dashboard) return <AuthScreen onLogin={login} error={error} setError={setError} />;
-  return <Shell user={user} view={view} setView={setView} logout={logout}>
-    {view === 'home' && <HomeView data={dashboard} onOpenQuest={quest => { setSelectedQuest(quest); setView('quest-detail'); }} setView={setView} />}
-    {view === 'quests' && <QuestView quests={dashboard.quests} onOpenQuest={quest => { setSelectedQuest(quest); setView('quest-detail'); }} onAddQuest={addQuest} setError={setError} />}
+  const quests = Array.isArray(dashboard.quests) ? dashboard.quests : [];
+  const achievements = Array.isArray(dashboard.achievements) ? dashboard.achievements : [];
+  const games = Array.isArray(dashboard.games) ? dashboard.games : [];
+  return <Shell user={user || { name: 'Player', level: 1 }} view={view} setView={setView} logout={logout}>
+    {view === 'home' && <HomeView data={{ ...dashboard, quests, achievements }} onOpenQuest={quest => { setSelectedQuest(quest); setView('quest-detail'); }} setView={setView} />}
+    {view === 'quests' && <QuestView quests={quests} onOpenQuest={quest => { setSelectedQuest(quest); setView('quest-detail'); }} onAddQuest={addQuest} setError={setError} />}
     {view === 'quest-detail' && selectedQuest && <QuestDetail quest={selectedQuest} onBack={() => setView('quests')} onComplete={completeQuest} />}
-    {view === 'achievements' && <AchievementView achievements={dashboard.achievements} />}
-    {view === 'profile' && <ProfileView user={user} games={dashboard.games} />}
+    {view === 'achievements' && <AchievementView achievements={achievements} />}
+    {view === 'profile' && <ProfileView user={user || { name: 'Player', level: 1 }} games={games} />}
     {error && <button className="toast" onClick={() => setError('')}>{error}<X size={15} /></button>}
   </Shell>;
 }
 
 function AuthScreen({ onLogin, error, setError }) {
-  const [mode, setMode] = useState('register'); const [form, setForm] = useState({ name: '', email: '', password: '' }); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState('login'); const [form, setForm] = useState({ name: '', email: '', password: '' }); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   async function submit(event) { event.preventDefault(); setBusy(true); setError(''); setMessage(''); try { if (mode === 'forgot') { const result = await request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: form.email }) }); setMessage(result.message); } else if (mode === 'register') { const result = await request('/auth/register', { method: 'POST', body: JSON.stringify(form) }); setMessage(result.message); setMode('login'); setForm({ ...form, password: '' }); } else { onLogin(await request('/auth/login', { method: 'POST', body: JSON.stringify(form) })); } } catch (err) { setError(err.message); } finally { setBusy(false); } }
   return <main className="auth-page"><div className="auth-art"><div className="brand-mark"><Swords size={22} /> QUESTUP</div><div className="orb orb-one" /><div className="orb orb-two" /><div className="auth-copy"><span className="eyebrow">YOUR ADVENTURE, ORGANIZED</span><h1>Make every quest<br /><em>count.</em></h1><p>Track the worlds you play, the missions you conquer, and the legend you are becoming.</p><div className="auth-stat"><Flame size={18} /><strong>12 day streak</strong><span>keep the run alive</span></div></div></div><section className="auth-form"><div className="mobile-brand"><Swords size={20} /> QUESTUP</div><span className="eyebrow">{mode === 'login' ? 'WELCOME BACK' : mode === 'register' ? 'JOIN THE PARTY' : 'ACCOUNT RECOVERY'}</span><h2>{mode === 'login' ? 'Sign in to your hub' : mode === 'register' ? 'Create your legend' : 'Find your way back'}</h2><p className="muted">{mode === 'forgot' ? 'Enter your email and we will send recovery instructions.' : 'Your quests are waiting on the other side.'}</p>{error && <div className="success-message">{error}</div>}<form onSubmit={submit}>{mode === 'register' && <label>Display name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Your adventurer name" /></label>}<label>Email<input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>{mode !== 'forgot' && <label>Password<input required minLength="6" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>}<button className="primary-button" disabled={busy}>{busy ? 'Loading...' : mode === 'login' ? 'Enter QuestUp' : mode === 'register' ? 'Create account' : 'Send recovery email'} <ArrowRight size={17} /></button></form>{message && <div className="success-message"><Check size={16} /> {message}</div>}<div className="auth-switch">{mode === 'login' && <button onClick={() => setMode('forgot')}>Forgot password?</button>}<button onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{mode === 'login' ? 'New to QuestUp? Create account' : 'Already have an account? Sign in'}</button></div><small className="demo-note">Demo access: demo@questup.app / questup123</small></section></main>;
 }
 
-function Shell({ user, view, setView, logout, children }) { const nav = [['home', Home, 'Home'], ['quests', ScrollText, 'Quests'], ['achievements', Trophy, 'Achievements'], ['profile', UserRound, 'Profile']]; return <div className="app-shell"><aside><div className="brand-mark"><Swords size={21} /> QUESTUP</div><div className="side-label">YOUR HUB</div><nav>{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /> {label}</button>)}</nav><div className="side-bottom"><div className="mini-user"><div className="avatar">MC</div><div><strong>{user.name}</strong><small>Level {user.level}</small></div></div><button className="icon-button" title="Sign out" onClick={logout}><LogOut size={17} /></button></div></aside><main className="content"><header><button className="mobile-menu"><Menu size={21} /></button><div><span className="eyebrow">MONDAY, 24 AUGUST 2026</span><h2>{view === 'home' ? 'Good evening, Mira.' : nav.find(item => item[0] === view)?.[2] || 'Quest detail'}</h2></div><div className="header-actions"><button className="icon-button"><Bell size={18} /></button><div className="avatar">MC</div></div></header>{children}</main><div className="mobile-nav">{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /><small>{label}</small></button>)}</div></div>; }
+function Shell({ user, view, setView, logout, children }) {
+  const nav = [['home', Home, 'Home'], ['quests', ScrollText, 'Quests'], ['achievements', Trophy, 'Achievements'], ['profile', UserRound, 'Profile']];
+  const displayName = user?.name || 'Player';
+  const displayLevel = user?.level || 1;
+  return <div className="app-shell"><aside><div className="brand-mark"><Swords size={21} /> QUESTUP</div><div className="side-label">YOUR HUB</div><nav>{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /> {label}</button>)}</nav><div className="side-bottom"><div className="mini-user"><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div><div><strong>{displayName}</strong><small>Level {displayLevel}</small></div></div><button className="icon-button" title="Sign out" onClick={logout}><LogOut size={17} /></button></div></aside><main className="content"><header><button className="mobile-menu"><Menu size={21} /></button><div><span className="eyebrow">MONDAY, 24 AUGUST 2026</span><h2>{view === 'home' ? 'Good evening.' : nav.find(item => item[0] === view)?.[2] || 'Quest detail'}</h2></div><div className="header-actions"><button className="icon-button"><Bell size={18} /></button><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div></div></header>{children}</main><div className="mobile-nav">{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /><small>{label}</small></button>)}</div></div>;
+}
 
 function HomeView({ data, onOpenQuest, setView }) { const active = data.quests.filter(quest => quest.status !== 'completed'); return <div className="view-stack"><section className="hero-panel"><div><span className="eyebrow lime">PERSONAL REMINDERS</span><h1>Keep every quest on track.</h1><p>บันทึกภารกิจจากเกมต่าง ๆ และดูวันครบกำหนดได้ในที่เดียว</p><button className="dark-button" onClick={() => setView('quests')}>จัดการการเตือน <ArrowRight size={16} /></button></div></section><div className="metric-grid"><Metric icon={<ScrollText />} label="ภารกิจทั้งหมด" value={data.quests.length} detail={`${active.length} รายการที่ยังไม่เสร็จ`} /><Metric icon={<Bell />} label="กำลังเตือน" value={active.length} detail="รายการที่ต้องทำ" /><Metric icon={<Trophy />} label="เสร็จแล้ว" value={data.quests.length - active.length} detail="รายการ" /></div><section className="section-heading"><div><span className="eyebrow">UP NEXT</span><h3>ภารกิจที่กำลังจะถึง</h3></div><button className="text-button" onClick={() => setView('quests')}>ดูทั้งหมด <ArrowRight size={15} /></button></section><div className="quest-list">{active.slice(0, 3).map(quest => <QuestRow key={quest.id} quest={quest} onClick={() => onOpenQuest(quest)} />)}</div></div>; }
 function Metric({ icon, label, value, detail }) { return <div className="metric"><div className="metric-icon">{icon}</div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
