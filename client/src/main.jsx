@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Bell, Check, ChevronLeft, Flame, Home, LogOut, Menu, Plus, ScrollText, Swords, Trophy, UserRound, X } from 'lucide-react';
+import { ArrowRight, Bell, Check, ChevronLeft, Flame, Home, LogOut, Plus, ScrollText, Swords, Trophy, UserRound, X } from 'lucide-react';
 import './styles.css';
 import './connection.css';
 
@@ -27,27 +27,47 @@ function App() {
   const [selectedQuest, setSelectedQuest] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState('');
+  const [loadingDashboard, setLoadingDashboard] = useState(Boolean(token));
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setDashboard(null);
+      setLoadingDashboard(false);
+      return;
+    }
+    let active = true;
+    setLoadingDashboard(true);
     request('/dashboard', { token })
-      .then(setDashboard)
+      .then(data => { if (active) setDashboard(data); })
       .catch(err => {
+        if (!active) return;
         setError(err.message);
         localStorage.removeItem('questup-token');
         setToken(null);
         setDashboard(null);
-      });
+      })
+      .finally(() => { if (active) setLoadingDashboard(false); });
+    return () => { active = false; };
   }, [token]);
   useEffect(() => {
     if (!dashboard || !Array.isArray(dashboard.quests)) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const due = dashboard.quests.filter(quest => quest.status !== 'completed' && quest.dueDate && quest.dueDate <= today);
     if (due.length) setError(`มี ${due.length} ภารกิจถึงกำหนดแล้ว`);
   }, [dashboard]);
-  function login(result) { localStorage.setItem('questup-token', result.token); localStorage.setItem('questup-user', JSON.stringify(result.user)); setToken(result.token); setUser(result.user); }
-  function logout() { localStorage.clear(); setToken(null); setUser(null); setDashboard(null); setError(''); }
+  function login(result) { localStorage.setItem('questup-token', result.token); localStorage.setItem('questup-user', JSON.stringify(result.user)); setDashboard(null); setLoadingDashboard(true); setToken(result.token); setUser(result.user); }
+  function logout() { localStorage.removeItem('questup-token'); localStorage.removeItem('questup-user'); setToken(null); setUser(null); setDashboard(null); setError(''); }
   async function addQuest(quest) { const result = await request('/quests', { method: 'POST', token, body: JSON.stringify(quest) }); const next = await request('/dashboard', { token }); setDashboard(next); setUser(next.user); setError(result.message); }
-  async function completeQuest(id) { const result = await request(`/quests/${id}/complete`, { method: 'PATCH', token }); const next = await request('/dashboard', { token }); setDashboard(next); setUser(next.user); setSelectedQuest(result); }
+  async function completeQuest(id) {
+    try {
+      const result = await request(`/quests/${id}/complete`, { method: 'PATCH', token });
+      const next = await request('/dashboard', { token });
+      setDashboard(next);
+      setUser(next.user);
+      setSelectedQuest(result);
+    } catch (err) { setError(err.message); }
+  }
+  if (token && loadingDashboard) return <main className="auth-page"><section className="auth-form"><p className="muted">กำลังโหลดข้อมูลของคุณ...</p></section></main>;
   if (!token || !dashboard) return <AuthScreen onLogin={login} error={error} setError={setError} />;
   const quests = Array.isArray(dashboard.quests) ? dashboard.quests : [];
   const achievements = Array.isArray(dashboard.achievements) ? dashboard.achievements : [];
@@ -72,10 +92,10 @@ function Shell({ user, view, setView, logout, children }) {
   const nav = [['home', Home, 'Home'], ['quests', ScrollText, 'Quests'], ['achievements', Trophy, 'Achievements'], ['profile', UserRound, 'Profile']];
   const displayName = user?.name || 'Player';
   const displayLevel = user?.level || 1;
-  return <div className="app-shell"><aside><div className="brand-mark"><Swords size={21} /> QUESTUP</div><div className="side-label">YOUR HUB</div><nav>{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /> {label}</button>)}</nav><div className="side-bottom"><div className="mini-user"><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div><div><strong>{displayName}</strong><small>Level {displayLevel}</small></div></div><button className="icon-button" title="Sign out" onClick={logout}><LogOut size={17} /></button></div></aside><main className="content"><header><button className="mobile-menu"><Menu size={21} /></button><div><span className="eyebrow">MONDAY, 24 AUGUST 2026</span><h2>{view === 'home' ? 'Good evening.' : nav.find(item => item[0] === view)?.[2] || 'Quest detail'}</h2></div><div className="header-actions"><button className="icon-button"><Bell size={18} /></button><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div></div></header>{children}</main><div className="mobile-nav">{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /><small>{label}</small></button>)}</div></div>;
+  return <div className="app-shell"><aside><div className="brand-mark"><Swords size={21} /> QUESTUP</div><div className="side-label">YOUR HUB</div><nav>{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /> {label}</button>)}</nav><div className="side-bottom"><div className="mini-user"><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div><div><strong>{displayName}</strong><small>Level {displayLevel}</small></div></div><button className="icon-button" title="Sign out" onClick={logout}><LogOut size={17} /></button></div></aside><main className="content"><header><div><span className="eyebrow">QUESTUP REMINDERS</span><h2>{view === 'home' ? 'Good evening.' : nav.find(item => item[0] === view)?.[2] || 'Quest detail'}</h2></div><div className="header-actions"><button className="icon-button" title="Open reminders" aria-label="Open reminders" onClick={() => setView('quests')}><Bell size={18} /></button><div className="avatar">{displayName.slice(0, 2).toUpperCase()}</div></div></header>{children}</main><div className="mobile-nav">{nav.map(([id, Icon, label]) => <button className={view === id ? 'active' : ''} key={id} onClick={() => setView(id)}><Icon size={18} /><small>{label}</small></button>)}</div></div>;
 }
 
-function HomeView({ data, onOpenQuest, setView }) { const active = data.quests.filter(quest => quest.status !== 'completed'); return <div className="view-stack"><section className="hero-panel"><div><span className="eyebrow lime">PERSONAL REMINDERS</span><h1>Keep every quest on track.</h1><p>บันทึกภารกิจจากเกมต่าง ๆ และดูวันครบกำหนดได้ในที่เดียว</p><button className="dark-button" onClick={() => setView('quests')}>จัดการการเตือน <ArrowRight size={16} /></button></div></section><div className="metric-grid"><Metric icon={<ScrollText />} label="ภารกิจทั้งหมด" value={data.quests.length} detail={`${active.length} รายการที่ยังไม่เสร็จ`} /><Metric icon={<Bell />} label="กำลังเตือน" value={active.length} detail="รายการที่ต้องทำ" /><Metric icon={<Trophy />} label="เสร็จแล้ว" value={data.quests.length - active.length} detail="รายการ" /></div><section className="section-heading"><div><span className="eyebrow">UP NEXT</span><h3>ภารกิจที่กำลังจะถึง</h3></div><button className="text-button" onClick={() => setView('quests')}>ดูทั้งหมด <ArrowRight size={15} /></button></section><div className="quest-list">{active.slice(0, 3).map(quest => <QuestRow key={quest.id} quest={quest} onClick={() => onOpenQuest(quest)} />)}</div></div>; }
+function HomeView({ data, onOpenQuest, setView }) { const active = data.quests.filter(quest => quest.status !== 'completed'); const upcoming = [...active].sort((first, second) => (first.dueDate || '').localeCompare(second.dueDate || '')); return <div className="view-stack"><section className="hero-panel"><div><span className="eyebrow lime">PERSONAL REMINDERS</span><h1>Keep every quest on track.</h1><p>บันทึกภารกิจจากเกมต่าง ๆ และดูวันครบกำหนดได้ในที่เดียว</p><button className="dark-button" onClick={() => setView('quests')}>จัดการการเตือน <ArrowRight size={16} /></button></div></section><div className="metric-grid"><Metric icon={<ScrollText />} label="ภารกิจทั้งหมด" value={data.quests.length} detail={`${active.length} รายการที่ยังไม่เสร็จ`} /><Metric icon={<Bell />} label="กำลังเตือน" value={active.length} detail="รายการที่ต้องทำ" /><Metric icon={<Trophy />} label="เสร็จแล้ว" value={data.quests.length - active.length} detail="รายการ" /></div><section className="section-heading"><div><span className="eyebrow">UP NEXT</span><h3>ภารกิจที่กำลังจะถึง</h3></div><button className="text-button" onClick={() => setView('quests')}>ดูทั้งหมด <ArrowRight size={15} /></button></section><div className="quest-list">{upcoming.slice(0, 3).map(quest => <QuestRow key={quest.id} quest={quest} onClick={() => onOpenQuest(quest)} />)}</div></div>; }
 function Metric({ icon, label, value, detail }) { return <div className="metric"><div className="metric-icon">{icon}</div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
 function QuestRow({ quest, onClick }) { return <button className="quest-row" onClick={onClick}><div className="quest-type"><ScrollText size={17} /></div><div className="quest-row-copy"><span>{quest.gameName} <b>· {quest.dueDate}</b></span><h4>{quest.title}</h4><div className="progress-line"><i style={{ width: `${quest.status === 'completed' ? 100 : 0}%` }} /></div></div><strong className="reward">{quest.status === 'completed' ? 'เสร็จแล้ว' : 'รอทำ'}</strong><ArrowRight size={17} /></button>; }
 function QuestView({ quests, onOpenQuest, onAddQuest, setError }) { const [filter, setFilter] = useState('All quests'); const [showForm, setShowForm] = useState(true); const [form, setForm] = useState({ gameName: '', title: '', description: '', dueDate: '' }); async function submit(event) { event.preventDefault(); try { await onAddQuest(form); setForm({ gameName: '', title: '', description: '', dueDate: '' }); } catch (err) { setError(err.message); } } return <div className="view-stack"><div className="filter-bar">{['All quests', 'Active', 'Completed'].map(item => <button className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)} key={item}>{item}</button>)}<button className="dark-button" onClick={() => setShowForm(value => !value)}><Plus size={16} /> {showForm ? 'Close' : 'Add reminder'}</button></div>{showForm && <form className="connect-form" onSubmit={submit}><label>Game name<input required value={form.gameName} onChange={event => setForm({ ...form, gameName: event.target.value })} placeholder="เช่น Genshin Impact" /></label><label>Quest name<input required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="เช่น เก็บวัตถุดิบ" /></label><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="รายละเอียดเพิ่มเติม" /></label><label>Due date<input required type="date" value={form.dueDate} onChange={event => setForm({ ...form, dueDate: event.target.value })} /></label><button className="primary-button">Save reminder <Check size={17} /></button></form>}<div className="quest-list full">{quests.filter(q => filter === 'All quests' || (filter === 'Active' ? q.status !== 'completed' : q.status === 'completed')).map(quest => <QuestRow key={quest.id} quest={quest} onClick={() => onOpenQuest(quest)} />)}</div></div>; }

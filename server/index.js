@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataPath = path.join(__dirname, 'data.json');
+const dataPath = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 const secret = process.env.JWT_SECRET || 'questup-local-secret-change-me';
 const gameCatalog = [
   { id: 'genshin', name: 'Genshin Adventure', genre: 'Open world RPG', color: '#d86b55', icon: '✦', level: 42, progress: 68, quests: 12, achievements: 24, provider: 'QuestUp demo connector' },
@@ -35,8 +35,42 @@ const seed = {
 function readData() {
   if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, JSON.stringify(seed, null, 2));
   const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  data.users = data.users.map(user => { const { gameIds, gameAccounts, ...cleanUser } = user; return cleanUser; });
-  data.quests = data.quests.map(quest => ({ ...quest, userId: quest.userId || 'u-demo', gameName: quest.gameName || gameCatalog.find(game => game.id === quest.gameId)?.name || 'เกมของฉัน', dueDate: quest.dueDate || '' }));
+  data.users = Array.isArray(data.users) ? data.users : [];
+  data.quests = Array.isArray(data.quests) ? data.quests : [];
+  data.achievements = Array.isArray(data.achievements) ? data.achievements : seed.achievements;
+
+  if (data.schemaVersion !== 2) {
+    const today = new Date();
+    const toDate = offset => {
+      const date = new Date(today);
+      date.setUTCDate(date.getUTCDate() + offset);
+      return date.toISOString().slice(0, 10);
+    };
+    const validDate = value => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    data.users = data.users.map(user => {
+      const { gameIds, gameAccounts, ...cleanUser } = user;
+      return cleanUser;
+    });
+    data.quests = data.quests.map(quest => {
+      const dueLabel = String(quest.due || '').toLowerCase();
+      const legacyDueDate = dueLabel === 'tomorrow' ? toDate(1) : toDate(0);
+      const dueDate = validDate(quest.dueDate) ? quest.dueDate : legacyDueDate;
+      return {
+        ...quest,
+        userId: quest.userId || 'u-demo',
+        gameName: quest.gameName || gameCatalog.find(game => game.id === quest.gameId)?.name || 'เกมของฉัน',
+        dueDate,
+        due: dueDate,
+        status: dueLabel === 'done' ? 'completed' : quest.status || 'active'
+      };
+    });
+    data.schemaVersion = 2;
+    writeData(data);
+  }
   return data;
 }
 function writeData(data) { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
