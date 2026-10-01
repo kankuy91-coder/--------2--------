@@ -36,3 +36,9 @@ The website will normally be available at the Live Server URL, such as
 Demo account: `demo@questup.app` / `questup123`
 
 The API runs at `http://localhost:4000` and exposes `/api/health`, auth endpoints, reminder creation, dashboard data, and reminder completion. Users enter the game name, quest name, and due date themselves. To use a production database, replace the small data access functions in `server/index.js` with a database repository while keeping the API contract unchanged.
+
+## Admin access
+
+Set the Render server environment variable `ADMIN_EMAILS` to a comma-separated list of administrator account email addresses, for example `admin@example.com,owner@example.com`. Register an account with one of those addresses (or use an existing account), then sign out and sign in again. The account receives the admin role and the Admin page becomes available.
+
+The Admin page provides account and reminder totals, searchable user and reminder tables, and reminder deletion with confirmation. Its API routes are `GET /api/admin/overview` and `DELETE /api/admin/reminders/:id`. Every route checks administrator access on the server; hiding the menu alone does not grant access. Without `ADMIN_EMAILS`, newly registered accounts are regular users and the app has no default admin login.

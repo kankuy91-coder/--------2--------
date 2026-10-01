@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataPath = process.env.DATA_FILE || path.join(__dirname, 'data.json');
-const secret = process.env.JWT_SECRET || 'questup-local-secret-change-me';
+const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+if (isProduction && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured in production');
+const secret = process.env.JWT_SECRET || 'questup-local-dev-secret-only';
+const configuredAdminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
 const gameCatalog = [
   { id: 'genshin', name: 'Genshin Adventure', genre: 'Open world RPG', color: '#d86b55', icon: '✦', level: 42, progress: 68, quests: 12, achievements: 24, provider: 'QuestUp demo connector' },
   { id: 'stardew', name: 'Stardew Valley', genre: 'Farming simulation', color: '#7aa05b', icon: '✿', level: 1, progress: 0, quests: 0, achievements: 0, provider: 'Manual connector' },
@@ -74,11 +77,20 @@ function readData() {
   return data;
 }
 function writeData(data) { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
-function publicUser(user) { const { password, ...safe } = user; return safe; }
+function publicUser(user) { const { password, ...safe } = user; if (configuredAdminEmails.has(user.email?.toLowerCase())) safe.role = 'admin'; return safe; }
 function tokenFor(user) { return jwt.sign({ id: user.id, role: user.role }, secret, { expiresIn: '2d' }); }
 function auth(req, res, next) {
   try { req.auth = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), secret); next(); }
   catch { res.status(401).json({ message: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' }); }
+}
+function adminAuth(req, res, next) {
+  const data = readData();
+  const user = data.users.find(item => item.id === req.auth.id);
+  if (!user || (user.role !== 'admin' && !configuredAdminEmails.has(user.email?.toLowerCase()))) {
+    return res.status(403).json({ message: 'ต้องใช้บัญชีผู้ดูแลระบบ' });
+  }
+  req.adminUser = user;
+  next();
 }
 
 const app = express();
@@ -97,9 +109,27 @@ app.post('/api/auth/register', (req, res) => {
 app.post('/api/auth/login', (req, res) => {
   const data = readData(); const user = data.users.find(item => item.email === req.body.email?.toLowerCase());
   if (!user || !bcrypt.compareSync(req.body.password || '', user.password)) return res.status(401).json({ message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
+  if (configuredAdminEmails.has(user.email.toLowerCase()) && user.role !== 'admin') { user.role = 'admin'; writeData(data); }
   res.json({ token: tokenFor(user), user: publicUser(user) });
 });
-app.post('/api/auth/forgot-password', (req, res) => res.json({ message: `หากมีบัญชีของ ${req.body.email || 'อีเมลนี้'} ระบบจะส่งลิงก์รีเซ็ตให้` }));
+app.post('/api/auth/forgot-password', (_, res) => res.status(501).json({ message: 'ระบบกู้คืนรหัสผ่านยังไม่เปิดใช้งาน กรุณาติดต่อผู้ดูแลเว็บไซต์' }));
+app.get('/api/admin/overview', auth, adminAuth, (_, res) => {
+  const data = readData();
+  const users = data.users.map(user => ({ ...publicUser(user), reminderCount: data.quests.filter(quest => quest.userId === user.id).length }));
+  const reminders = data.quests.map(quest => {
+    const owner = data.users.find(user => user.id === quest.userId);
+    return { ...quest, ownerName: owner?.name || 'Unknown user', ownerEmail: owner?.email || '' };
+  });
+  res.json({ users, reminders, totals: { users: users.length, reminders: reminders.length, active: reminders.filter(item => item.status !== 'completed').length } });
+});
+app.delete('/api/admin/reminders/:id', auth, adminAuth, (req, res) => {
+  const data = readData();
+  const index = data.quests.findIndex(quest => quest.id === req.params.id);
+  if (index < 0) return res.status(404).json({ message: 'ไม่พบภารกิจเตือนความจำ' });
+  data.quests.splice(index, 1);
+  writeData(data);
+  res.json({ message: 'ลบภารกิจเตือนความจำแล้ว' });
+});
 app.post('/api/quests', auth, (req, res) => {
   const { gameName, title, description = '', dueDate } = req.body; const data = readData();
   if (!data.users.some(user => user.id === req.auth.id)) return res.status(401).json({ message: 'ไม่พบบัญชีผู้ใช้' });
